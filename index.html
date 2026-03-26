@@ -54,28 +54,46 @@
     </div>
 </div>
 
-<script type="module">
+    <script type="module">
     import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
     import { fetchFile } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
 
     const ffmpeg = new FFmpeg();
     const el = (id) => document.getElementById(id);
 
-    // Bypasses COOP/COEP headers for GitHub Pages
+    // This function is the secret sauce. 
+    // It downloads the file and turns it into a local "blob" link 
+    // so the browser's security system doesn't block it.
     const toBlobURL = async (url, type) => {
         const res = await fetch(url);
-        return URL.createObjectURL(new Blob([await res.blob()], { type }));
+        const blob = await res.blob();
+        return URL.createObjectURL(blob);
     };
 
     async function init() {
-        const corePath = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-        await ffmpeg.load({
-            coreURL: await toBlobURL(`${corePath}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${corePath}/ffmpeg-core.wasm`, 'application/wasm'),
-        });
-        el('startBtn').innerText = 'Convert Now';
-        el('startBtn').disabled = false;
+        try {
+            const corePath = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+            const ffmpegPath = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm';
+
+            await ffmpeg.load({
+                coreURL: await toBlobURL(`${corePath}/ffmpeg-core.js`, 'text/javascript'),
+                wasmURL: await toBlobURL(`${corePath}/ffmpeg-core.wasm`, 'application/wasm'),
+                // THIS LINE FIXES THE "WORKER" ERROR:
+                workerURL: await toBlobURL(`${ffmpegPath}/worker.js`, 'text/javascript'),
+            });
+
+            el('startBtn').innerText = 'Convert Now';
+            el('startBtn').disabled = false;
+            el('status').innerText = "Engine Loaded. Ready!";
+        } catch (err) {
+            console.error(err);
+            el('status').innerText = "Load Error: " + err.message;
+        }
     }
+
+    // ... (rest of the conversion logic from the previous code) ...
+    // Note: Make sure the rest of your click handler and progress 
+    // logic from the previous code is still there!
 
     ffmpeg.on('progress', ({ progress }) => {
         el('progCont').style.display = 'block';
@@ -100,9 +118,6 @@
             const outputName = `output.${format}`;
 
             await ffmpeg.writeFile(inputName, inputData);
-            
-            // Execute conversion
-            // -i: input, -vn: no video, -q:a 0: variable bitrate high quality
             await ffmpeg.exec(['-i', inputName, '-vn', '-q:a', '0', outputName]);
 
             const data = await ffmpeg.readFile(outputName);
@@ -115,7 +130,6 @@
             el('resultArea').style.display = 'block';
             el('status').innerText = 'Conversion Complete!';
         } catch (e) {
-            console.error(e);
             el('status').innerText = "Error: " + e.message;
         } finally {
             el('startBtn').disabled = false;
@@ -124,5 +138,3 @@
 
     init();
 </script>
-</body>
-</html>

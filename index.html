@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video to MP3 Converter</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            text-align: center;
+            background-color: #f9fafb;
+            color: #111827;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        input[type="file"] {
+            margin: 20px 0;
+            padding: 10px;
+            border: 2px dashed #d1d5db;
+            border-radius: 8px;
+            width: 100%;
+            box-sizing: border-box;
+            cursor: pointer;
+        }
+        button {
+            background-color: #3b82f6;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-weight: bold;
+        }
+        button:hover { background-color: #2563eb; }
+        button:disabled { background-color: #9ca3af; cursor: not-allowed; }
+        #log {
+            margin-top: 20px;
+            color: #4b5563;
+            font-size: 12px;
+            white-space: pre-wrap;
+            text-align: left;
+            background: #f3f4f6;
+            padding: 15px;
+            border-radius: 8px;
+            display: none;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .result-area { margin-top: 25px; }
+        audio { width: 100%; margin-bottom: 15px; outline: none; }
+        .download-btn {
+            display: inline-block;
+            background-color: #10b981;
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .download-btn:hover { background-color: #059669; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Video to MP3 Converter</h1>
+        <p>Select a video file to convert it entirely in your browser. No files are uploaded to any server!</p>
+
+        <input type="file" id="uploader" accept="video/*">
+        <br>
+        <button id="convertBtn" disabled>Loading Engine...</button>
+        
+        <div id="log"></div>
+        
+        <div class="result-area" id="resultArea" style="display: none;">
+            <h3>Done! Listen or Download:</h3>
+            <audio id="player" controls></audio>
+            <br>
+            <a id="downloadLink" class="download-btn">Download MP3</a>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import FFmpeg and utilities
+        import { FFmpeg } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js';
+        import { fetchFile } from 'https://unpkg.com/@ffmpeg/util@0.12.1/dist/esm/index.js';
+
+        const ffmpeg = new FFmpeg();
+        const convertBtn = document.getElementById('convertBtn');
+        const uploader = document.getElementById('uploader');
+        const log = document.getElementById('log');
+        const player = document.getElementById('player');
+        const downloadLink = document.getElementById('downloadLink');
+        const resultArea = document.getElementById('resultArea');
+
+        // Log underlying FFmpeg messages to the screen
+        ffmpeg.on('log', ({ message }) => {
+            log.style.display = 'block';
+            log.textContent = message + '\n' + log.textContent;
+        });
+
+        // Helper function to bypass strict worker origin rules by using Blobs
+        const toBlobURL = async (url, mimeType) => {
+            const resp = await fetch(url);
+            const blob = await resp.blob();
+            const blobWithMime = new Blob([blob], { type: mimeType });
+            return URL.createObjectURL(blobWithMime);
+        };
+
+        // Load the single-threaded webassembly core
+        const loadFFmpeg = async () => {
+            const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
+            await ffmpeg.load({
+                coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            });
+            convertBtn.textContent = 'Convert to MP3';
+            convertBtn.disabled = false;
+        };
+
+        // Initialize engine on load
+        loadFFmpeg().catch(err => {
+            log.style.display = 'block';
+            log.textContent = "Error loading engine: " + err.message;
+            convertBtn.textContent = 'Failed to load';
+        });
+
+        convertBtn.addEventListener('click', async () => {
+            const files = uploader.files;
+            if (files.length === 0) {
+                alert("Please select a video file first.");
+                return;
+            }
+
+            const file = files[0];
+            const inputName = 'input_vid' + file.name.substring(file.name.lastIndexOf('.'));
+            const outputName = 'output.mp3';
+
+            // Reset UI
+            convertBtn.disabled = true;
+            convertBtn.textContent = 'Converting... (This may take a moment)';
+            resultArea.style.display = 'none';
+
+            try {
+                // 1. Write the file to FFmpeg's virtual memory
+                await ffmpeg.writeFile(inputName, await fetchFile(file));
+
+                // 2. Run the command to strip video (-vn) and export max quality audio (-q:a 0)
+                await ffmpeg.exec(['-i', inputName, '-vn', '-q:a', '0', outputName]);
+
+                // 3. Read the output file
+                const data = await ffmpeg.readFile(outputName);
+
+                // 4. Create an object URL to play/download the file
+                const audioBlob = new Blob([data.buffer], { type: 'audio/mp3' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+
+                // 5. Update UI
+                player.src = audioUrl;
+                downloadLink.href = audioUrl;
+                downloadLink.download = file.name.replace(/\.[^/.]+$/, "") + ".mp3";
+                resultArea.style.display = 'block';
+
+                convertBtn.textContent = 'Convert Another';
+            } catch (err) {
+                log.textContent = "Conversion error: " + err.message + '\n' + log.textContent;
+                convertBtn.textContent = 'Error! Check Log.';
+            } finally {
+                convertBtn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>
